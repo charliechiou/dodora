@@ -1,6 +1,7 @@
 import requests
 import datetime
 import urllib3
+from dotenv import load_dotenv
 import json
 import os
 import re
@@ -11,6 +12,8 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 from apscheduler.schedulers.background import BackgroundScheduler
+
+load_dotenv()
 
 # 忽略警告與 SSL 檢查
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -34,8 +37,11 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 def load_mailbox():
     if os.path.exists(MAILBOX_FILE):
-        with open(MAILBOX_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(MAILBOX_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError:  # 處理檔案格式錯誤
+            return {USER_ME: [], USER_PARTNER: []}
     return {USER_ME: [], USER_PARTNER: []}
 
 
