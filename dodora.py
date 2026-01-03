@@ -151,6 +151,9 @@ def process_weather_ollama(w_data):
 # ==================== 地震監測 ====================
 
 
+LAST_EARTHQUAKE_NO = 114156  # 初始值，避免啟動時推播舊訊息
+
+
 def check_earthquake():
     """ 每分鐘檢查一次地震 API """
     global LAST_EARTHQUAKE_NO
