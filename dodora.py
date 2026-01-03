@@ -148,6 +148,63 @@ def process_weather_ollama(w_data):
         print(f"Ollama 生成失敗: {e}")
         return f"目前台南 {w_data['MinT']}~{w_data['MaxT']}度，多多拉覺得很{feeling}唷！"
 
+# ==================== 地震監測 ====================
+
+
+def check_earthquake():
+    """ 每分鐘檢查一次地震 API """
+    global LAST_EARTHQUAKE_NO
+    url = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/E-A0015-001"
+    params = {
+        "Authorization": CWA_API_KEY,
+        "limit": 1,  # 只取最新的一筆
+        "format": "JSON"
+    }
+
+    try:
+        # 由於這是在背景執行，不驗證 SSL 以確保連線穩定
+        response = requests.get(url, params=params, verify=False)
+        data = response.json()
+
+        # 取得最新一筆地震報告
+        eq_record = data['records']['Earthquake'][0]
+        eq_no = eq_record['EarthquakeNo']
+
+        # 如果是新的地震編號，才進行判斷
+        if eq_no != LAST_EARTHQUAKE_NO:
+            LAST_EARTHQUAKE_NO = eq_no
+
+            info = eq_record['EarthquakeInfo']
+            mag = float(info['EarthquakeMagnitude']['MagnitudeValue'])  # 規模
+
+            # 尋找臺南市的震度資訊
+            tainan_intensity = "無"
+            shaking_areas = eq_record['Intensity']['ShakingArea']
+            for area in shaking_areas:
+                if area['CountyName'] == "臺南市":
+                    tainan_intensity = area['AreaIntensity']
+                    break
+
+            # 推播標準：規模 >= 3.0 或 臺南市有震度
+            if mag >= 3.0 or tainan_intensity != "無":
+                msg = (
+                    f"⚠️ 地震速報 (編號:{eq_no}) ⚠️\n"
+                    f"剛才有地震！多多拉感覺到了唷！\n"
+                    f"--------------------\n"
+                    f"● 地震規模：{mag}\n"
+                    f"● 臺南震度：{tainan_intensity}\n"
+                    f"--------------------\n"
+                    f"還好嗎？要注意安全唷！💕"
+                )
+
+                # 同時推播給兩個人
+                line_bot_api.push_message(USER_ME, TextSendMessage(text=msg))
+                line_bot_api.push_message(
+                    USER_PARTNER, TextSendMessage(text=msg))
+
+    except Exception as e:
+        print(f"地震監測發生錯誤：{e}")
+
 # ==================== 3. 每日廣播任務 (改用 Ollama) ====================
 
 
@@ -170,6 +227,7 @@ scheduler.add_job(lambda: send_weather_update(
     'morning'), 'cron', hour=8, minute=30)
 scheduler.add_job(lambda: send_weather_update(
     'afternoon'), 'cron', hour=18, minute=30)
+scheduler.add_job(check_earthquake, 'interval', minutes=1)
 scheduler.start()
 
 # ==================== 4. Webhook 與訊息處理 ====================
