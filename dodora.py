@@ -52,8 +52,10 @@ def save_mailbox(data):
 
 # --- 天氣抓取函數 ---
 # --- 設定您的溫度體感門檻 (可隨時調整) ---
-COLD_TEMP = 18  # 低於 18 度您覺得冷
-HOT_TEMP = 28   # 高於 28 度您覺得熱
+VERY_COLD_TEMP = 15  # 低於 15 度：極冷
+COLD_TEMP = 20       # 15 ~ 20 度：偏冷
+HOT_TEMP = 25        # 26 ~ 32 度：偏熱 (假設 20-26 為舒適)
+VERY_HOT_TEMP = 25   # 高於 25 度：極熱
 
 
 def get_tainan_weather():
@@ -80,7 +82,7 @@ def get_tainan_weather():
 
 
 def get_feeling_label(weather_data):
-    """ 根據您的標準產出體感標籤 """
+    """ 根據四個門檻產出五種等級的體感標籤 """
     if not weather_data:
         return "未知"
 
@@ -88,47 +90,78 @@ def get_feeling_label(weather_data):
     max_t = int(weather_data['MaxT'])
     pop = int(weather_data['PoP'])
 
-    # 冷熱判斷邏輯
-    if min_t <= COLD_TEMP:
-        feeling = "寒冷 (請務必提醒穿厚外套)"
+    # 五段式冷熱判斷邏輯
+    if min_t <= VERY_COLD_TEMP:
+        feeling = "寒冷刺骨 (建議穿發熱衣加厚大衣)"
+    elif min_t <= COLD_TEMP:
+        feeling = "有些涼意 (建議穿長袖加薄外套)"
+    elif max_t >= VERY_HOT_TEMP:
+        feeling = "極度酷熱 (建議穿最涼爽衣物，嚴防中暑)"
     elif max_t >= HOT_TEMP:
-        feeling = "酷熱 (請提醒防曬與補水)"
+        feeling = "有些悶熱 (建議穿透氣短袖，注意防曬)"
     else:
-        feeling = "舒適涼爽"
+        feeling = "舒適涼爽 (穿著輕便舒適即可)"
 
-    # 額外加入降雨提醒邏輯
+    # 降雨提醒邏輯依舊維持
     rain_alert = "記得帶傘唷" if pop >= 30 else "不必帶傘"
 
     return f"體感：{feeling}，雨具：{rain_alert}"
 
-# ==================== 3. 每日廣播任務 (改用 Ollama) ====================
 
+def process_weather_ollama(w_data):
+    """ 統一處理天氣數據並透過 Ollama 生成文字 """
+    if not w_data:
+        return "氣象局好像在忙碌中，晚點再問我唷！"
 
-def send_weather_update(time_of_day):
-    weather_info = get_tainan_weather()
-    prompt = f"時段：{'早上' if time_of_day == 'morning' else '傍晚'}\n氣象數據：{weather_info}"
+    feeling = get_feeling_label(w_data)
+    pop_val = int(w_data.get('PoP', 0))
+
+    # --- 完全隔離指令邏輯 ---
+    if pop_val >= 30:
+        umbrella_instruction = f"目前降雨機率為 {pop_val}%，請務必提醒出門『記得帶傘』。"
+    else:
+        umbrella_instruction = f"目前降雨機率為 {pop_val}%"
+
+    # 組合與查詢功能一致的 Prompt
+    prompt = (
+        f"台南目前氣溫：{w_data['MinT']}~{w_data['MaxT']}度。\n"
+        f"體感標籤：{feeling}。\n"
+        f"{umbrella_instruction}\n"
+        f"請以『多多拉』的身分提醒氣溫範圍及降雨機率。"
+    )
 
     try:
         response = ollama.chat(
             model='gemma2:2b',
             messages=[
-                {'role': 'system', 'content': (
-                    "你名叫多多拉，是專業且親切的氣象助手。你的任務是將氣象數據轉化為溫暖的建議。\n"
-                    "請嚴格遵守以下格式輸出：\n"
-                    "1.【今日天氣簡報】：(一句話描述)\n"
-                    "2.【穿衣建議】：(具體且精確的建議)\n"
-                    "3.【多多拉提醒】：(親切的結尾語助詞用『唷』)\n"
-                    "注意：文字要精簡，不准使用『大家』，直接對使用者說話。"
-                )},
+                {'role': 'system', 'content': '你名叫多多拉，語氣親切。請根據資訊給予建議。'},
                 {'role': 'user', 'content': prompt},
             ],
-            options={'temperature': 0.3, 'num_predict': 200}  # 降低隨機性
+            options={'temperature': 0.3}
         )
-        advice = response['message']['content'].strip()
-        line_bot_api.broadcast(TextSendMessage(
-            text=f"✨ 多多拉晨間報報 ✨\n\n{advice}" if time_of_day == 'morning' else f"✨ 多多拉晚間報報 ✨\n\n{advice}"))
+        raw_text = response['message']['content'].strip()
+        # 移除換行符號，保持單一段落
+        reply_text = raw_text.replace("\n", " ").replace("\r", " ").strip()
+        reply_text = re.sub(r'\s+', ' ', reply_text)
+        return reply_text
     except Exception as e:
-        print(f"本地廣播生成失敗：{e}")
+        print(f"Ollama 生成失敗: {e}")
+        return f"目前台南 {w_data['MinT']}~{w_data['MaxT']}度，多多拉覺得很{feeling}唷！"
+
+# ==================== 3. 每日廣播任務 (改用 Ollama) ====================
+
+
+def send_weather_update(time_of_day):
+    """ 每日定時廣播 """
+    w_data = get_tainan_weather()
+    # 呼叫統一處理函數
+    advice = process_weather_ollama(w_data)
+
+    prefix = "✨ 多多拉晨間報報 ✨" if time_of_day == 'morning' else "✨ 多多拉晚間報報 ✨"
+    try:
+        line_bot_api.broadcast(TextSendMessage(text=f"{prefix}\n\n{advice}"))
+    except Exception as e:
+        print(f"廣播發送失敗：{e}")
 
 
 # 設定排程
@@ -219,50 +252,10 @@ def handle_message(event):
         )
 
         w_data = get_tainan_weather()
+        # 2. 取得與廣播一致的精確內容
+        reply_text = process_weather_ollama(w_data)
 
-        if w_data:
-            feeling = get_feeling_label(w_data)
-            pop_val = int(w_data.get('PoP', 0))
-
-            # --- 完全隔離指令 ---
-            if pop_val >= 30:
-                # 只有機率高時，才把「雨具」這個概念丟給 AI
-                umbrella_instruction = f"目前降雨機率為 {pop_val}%，請務必提醒出門『記得帶傘』。"
-            else:
-                # 機率低時，對 AI 來說「雨傘」這個詞根本不存在
-                umbrella_instruction = ""
-
-            # 3. 組合 Prompt
-            # 如果沒有雨傘指令，AI 的 Prompt 裡就只有氣溫和體感
-            prompt = (
-                f"台南目前氣溫：{w_data['MinT']}~{w_data['MaxT']}度。\n"
-                f"體感標籤：{feeling}。\n"
-                f"{umbrella_instruction}\n"
-                f"請以『多多拉』的身分提醒氣溫範圍及降雨機率。"
-            )
-
-            try:
-                response = ollama.chat(
-                    model='gemma2:2b',
-                    messages=[
-                        {'role': 'system',
-                            'content': '你名叫多多拉，語氣親切。請根據使用者提供的資訊給予穿衣與生活建議。'},
-                        {'role': 'user', 'content': prompt},
-                    ],
-                    options={'temperature': 0.3}  # 極低隨機性
-                )
-                raw_text = response['message']['content'].strip()
-                # 將換行符號替換為空，並處理多餘空格
-                reply_text = raw_text.replace(
-                    "\n", " ").replace("\r", " ").strip()
-                # 如果擔心 AI 生成多個空格，可以用 re 模組處理
-                reply_text = re.sub(r'\s+', ' ', reply_text)
-            except Exception as e:
-                reply_text = f"目前台南 {w_data['MinT']}~{w_data['MaxT']}度，多多拉覺得很{feeling}唷！"
-        else:
-            reply_text = "氣象局好像在忙碌中，晚點再問我唷！"
-
-        # 主動推播結果
+        # 3. 主動推播結果
         line_bot_api.push_message(user_id, TextSendMessage(text=reply_text))
 
 
