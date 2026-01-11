@@ -137,7 +137,7 @@ def process_weather_ollama(w_data):
                 {'role': 'system', 'content': '你名叫多多拉，語氣親切。請根據資訊給予建議。'},
                 {'role': 'user', 'content': prompt},
             ],
-            options={'temperature': 0.3}
+            options={'temperature': 0.5}
         )
         raw_text = response['message']['content'].strip()
         # 移除換行符號，保持單一段落
@@ -189,7 +189,7 @@ def check_earthquake():
                     break
 
             # 推播標準：規模 >= 3.0 或 臺南市有震度
-            if mag >= 3.0 or tainan_intensity != "無":
+            if tainan_intensity != "無":
                 msg = (
                     f"⚠️ 地震速報 (編號:{eq_no}) ⚠️\n"
                     f"剛才有地震！多多拉感覺到了唷！\n"
